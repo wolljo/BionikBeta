@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bionic Beta</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600&display=swap" rel="stylesheet" />
+  <meta name="description" content="Bionic Beta — Houston Music Portfolio" />
+</head>
+<body>
+  <header>
+    <h1>Bionic Beta</h1>
+    <p class="subtitle">Houston – Music Portfolio</p>
+  </header>
+
+  <main id="track-list" aria-live="polite"></main>
+
+  <footer>
+    <div id="player" role="region" aria-label="Audio player">
+      <button id="prev" aria-label="Previous">⏮</button>
+      <button id="play" aria-label="Play/Pause">▶</button>
+      <button id="next" aria-label="Next">⏭</button>
+      <div id="info" aria-live="polite"></div>
+    </div>
+    <span id="version">v1.0</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
