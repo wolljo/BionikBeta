@@ -2,7 +2,11 @@
   const $  = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
 
-  const audio = $('#audio');
+  const audioA = $('#audioA');
+  const audioB = $('#audioB');
+  // Audio-Elemente gehen durch WebAudio-Graph (visuals.js); deshalb muten:
+  audioA.muted = true; audioB.muted = true;
+
   const seek  = $('#seek');
   const time  = $('#time');
   const vol   = $('#vol');
@@ -22,13 +26,14 @@
     idx: 0,
     shuffle: false,
     loop: false,
-    quality: 'auto',    // 'auto' | 'fine' | 'mid' | 'coarse'
+    quality: 'auto',   // 'auto' | 'fine' | 'mid' | 'coarse'
     asciiOn: true,
-    theme: 'clean',     // 'clean' | 'glitch'
-    lastPos: 0
+    theme: 'clean',    // 'clean' | 'glitch'
+    lastPos: 0,
+    active: 'A',       // 'A' | 'B'
+    firstPlayDone: false
   };
 
-  // Load saved state
   try {
     const saved = JSON.parse(localStorage.getItem('ascii_album_state') || '{}');
     Object.assign(state, saved);
@@ -38,12 +43,12 @@
     localStorage.setItem('ascii_album_state', JSON.stringify({
       idx: state.idx, shuffle: state.shuffle, loop: state.loop,
       quality: state.quality, asciiOn: state.asciiOn, theme: state.theme,
-      lastPos: audio.currentTime, vol: vol.value
+      lastPos: getActive().currentTime, vol: vol.value, active: state.active
     }));
   }
 
   async function loadTracks() {
-    const res = await fetch('tracks.json?v=0.3');
+    const res = await fetch('tracks.json?v=0.4');
     state.tracks = await res.json();
     renderPlaylist();
   }
@@ -56,12 +61,8 @@
       item.dataset.idx = i;
       item.innerHTML = `
         <div class="idx">${String(i+1).padStart(2,'0')}</div>
-        <div class="meta">
-          <div class="title">${t.title}</div>
-          <div class="artist">${t.artist}</div>
-        </div>
-        <div class="dur" data-idx="${i}">--:--</div>
-      `;
+        <div class="meta"><div class="title">${t.title}</div><div class="artist">${t.artist}</div></div>
+        <div class="dur" data-idx="${i}">--:--</div>`;
       item.addEventListener('click', () => playIndex(i, true));
       playlistEl.appendChild(item);
       preloadDuration(t.srcMp3, i);
@@ -83,11 +84,10 @@
   }
 
   function updateTimeUI() {
-    const cur = audio.currentTime || 0;
-    const dur = isFinite(audio.duration) ? audio.duration : 0;
+    const cur = getActive().currentTime || 0;
+    const dur = isFinite(getActive().duration) ? getActive().duration : 0;
     time.textContent = `${formatTime(cur)} / ${dur ? formatTime(dur) : '00:00'}`;
-    if (dur > 0) seek.value = Math.floor((cur / dur) * 1000);
-    else seek.value = 0;
+    seek.value = dur > 0 ? Math.floor((cur / dur) * 1000) : 0;
   }
 
   function setNowPlaying(t) {
@@ -95,15 +95,17 @@
     npArtist.textContent = t.artist;
   }
 
+  function getActive()  { return state.active === 'A' ? audioA : audioB; }
+  function getInactive(){ return state.active === 'A' ? audioB : audioA; }
+
+  // UI helpers
   function setQualityCell() {
     const btnQ = document.getElementById('btn-quality');
     const vw = Math.min(window.innerWidth, window.innerHeight);
-    // Auto-Logik: Phones → gröbere Zellen, Tablets/Desktops → feiner
     if (state.quality === 'auto') {
-      const coarse = vw < 420;     // kleine Phones
+      const coarse = vw < 420;
       const mid    = vw >= 420 && vw < 900;
-      document.documentElement.style.setProperty('--ascii-cell',
-        coarse ? '14px' : (mid ? '10px' : '8px'));
+      document.documentElement.style.setProperty('--ascii-cell', coarse ? '12px' : (mid ? '10px' : '8px'));
       btnQ.textContent = 'Dichte: Auto';
     } else if (state.quality === 'coarse') {
       document.documentElement.style.setProperty('--ascii-cell', '14px');
@@ -117,33 +119,43 @@
     }
     window.dispatchEvent(new Event('resize'));
   }
-
   function applyTheme() {
     const btnTheme = document.getElementById('btn-theme');
-    if (state.theme === 'glitch') {
-      document.body.classList.add('glitch');
-      btnTheme.textContent = 'Theme: Glitch';
-    } else {
-      document.body.classList.remove('glitch');
-      btnTheme.textContent = 'Theme: Clean';
-    }
+    if (state.theme === 'glitch') { document.body.classList.add('glitch');  btnTheme.textContent = 'Theme: Glitch'; }
+    else                          { document.body.classList.remove('glitch'); btnTheme.textContent = 'Theme: Clean'; }
   }
 
-  function toggleViz() {
-    state.asciiOn = !state.asciiOn;
-    document.getElementById('btn-viz').textContent = state.asciiOn ? 'ASCII ON' : 'ASCII OFF';
-    window.dispatchEvent(new Event('toggle-viz'));
-    save();
-  }
-
+  // --- Crossfade Core ---
+  let fadeMs = 300;
   async function playIndex(i) {
     if (!state.tracks.length) return;
-    state.idx = (i + state.tracks.length) % state.tracks.length;
-    const t = state.tracks[state.idx];
-    audio.src = t.srcMp3 + '?v=0.3';
-    setNowPlaying(t);
+    const nextIdx = (i + state.tracks.length) % state.tracks.length;
+    const track = state.tracks[nextIdx];
+
+    const activeEl = getActive();
+    const idleEl   = getInactive();
+
+    idleEl.src = track.srcMp3 + '?v=0.4';
+    idleEl.currentTime = 0;
+
+    setNowPlaying(track);
     highlightActive();
-    try { await audio.play(); btnPlay.textContent = '⏸'; } catch { btnPlay.textContent = '▶'; }
+
+    try {
+      await idleEl.play();
+      // AudioGraph aus visuals steuert Gains:
+      if (window.__asciiAlbum?.audioGraph?.fadeTo) {
+        await window.__asciiAlbum.audioGraph.fadeTo(state.active === 'A' ? 'B' : 'A', fadeMs);
+      }
+      // nach Crossfade aktiv umschalten
+      activeEl.pause();
+      state.active = (state.active === 'A') ? 'B' : 'A';
+      btnPlay.textContent = '⏸';
+    } catch {
+      btnPlay.textContent = '▶';
+    }
+
+    state.idx = nextIdx;
     save();
   }
 
@@ -160,34 +172,50 @@
   }
   function prev() { playIndex(state.idx - 1); }
 
-  // Bindings
+  // --- Bindings ---
   $('#btn-theme').addEventListener('click', () => { state.theme = (state.theme === 'clean') ? 'glitch' : 'clean'; applyTheme(); save(); });
   $('#btn-quality').addEventListener('click', () => {
     state.quality = (state.quality === 'auto') ? 'fine' : (state.quality === 'fine' ? 'mid' : (state.quality === 'mid' ? 'coarse' : 'auto'));
     setQualityCell(); save();
   });
-  $('#btn-viz').addEventListener('click', toggleViz);
+  $('#btn-viz').addEventListener('click', () => { state.asciiOn = !state.asciiOn; $('#btn-viz').textContent = state.asciiOn ? 'ASCII ON' : 'ASCII OFF'; window.dispatchEvent(new Event('toggle-viz')); save(); });
+  $('#btn-viz-toggle')?.addEventListener('click', () => { $('#btn-viz').click(); });
 
   btnPlay.addEventListener('click', async () => {
-    if (audio.paused) { try { await audio.play(); btnPlay.textContent = '⏸'; } catch {} }
-    else { audio.pause(); btnPlay.textContent = '▶'; }
+    const act = getActive();
+    if (act.paused) {
+      try { await act.play(); btnPlay.textContent = '⏸'; } catch {}
+      if (!state.firstPlayDone && window.__asciiAlbum?.audioGraph?.resume) window.__asciiAlbum.audioGraph.resume();
+      state.firstPlayDone = true;
+    } else {
+      act.pause(); btnPlay.textContent = '▶';
+    }
+    save();
   });
   btnNext.addEventListener('click', next);
   btnPrev.addEventListener('click', prev);
-  btnShuffle.addEventListener('click', () => { state.shuffle = !state.shuffle; btnShuffle.classList.toggle('active', state.shuffle); save(); });
-  btnLoop.addEventListener('click', () => { state.loop = !state.loop; btnLoop.textContent = 'Loop: ' + (state.loop ? 'an' : 'aus'); save(); });
+
+  btnShuffle.addEventListener('click', () => {
+    state.shuffle = !state.shuffle; btnShuffle.setAttribute('aria-pressed', String(state.shuffle)); save();
+  });
+  btnLoop.addEventListener('click', () => {
+    state.loop = !state.loop; btnLoop.setAttribute('aria-pressed', String(state.loop)); save();
+  });
 
   seek.addEventListener('input', () => {
-    const dur = isFinite(audio.duration) ? audio.duration : 0;
-    if (dur > 0) audio.currentTime = (seek.value/1000) * dur;
+    const act = getActive();
+    const dur = isFinite(act.duration) ? act.duration : 0;
+    if (dur > 0) act.currentTime = (seek.value/1000) * dur;
   });
+
   vol.addEventListener('input', () => {
     const x = parseFloat(vol.value);
-    audio.volume = Math.pow(x, 1.5);
+    // globale Lautstärke über AudioGraph
+    if (window.__asciiAlbum?.audioGraph?.setVolume) window.__asciiAlbum.audioGraph.setVolume(Math.pow(x, 1.5));
     save();
   });
 
-  // Keyboard Shortcuts
+  // Keyboard
   window.addEventListener('keydown', (e) => {
     if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
     if (e.code === 'Space') { e.preventDefault(); btnPlay.click(); }
@@ -195,17 +223,16 @@
     if (e.code === 'ArrowLeft')  prev();
     if (e.key?.toLowerCase() === 's') btnShuffle.click();
     if (e.key?.toLowerCase() === 'l') btnLoop.click();
-    if (e.key?.toLowerCase() === 't') document.getElementById('btn-theme').click();
-    if (e.key?.toLowerCase() === 'q') document.getElementById('btn-quality').click();
-    if (e.key?.toLowerCase() === 'v') document.getElementById('btn-viz').click();
+    if (e.key?.toLowerCase() === 't') $('#btn-theme').click();
+    if (e.key?.toLowerCase() === 'q') $('#btn-quality').click();
+    if (e.key?.toLowerCase() === 'v') $('#btn-viz').click();
     if (e.key === 'ArrowUp') { vol.value = Math.min(1, parseFloat(vol.value)+0.05); vol.dispatchEvent(new Event('input')); }
     if (e.key === 'ArrowDown') { vol.value = Math.max(0, parseFloat(vol.value)-0.05); vol.dispatchEvent(new Event('input')); }
   });
 
   // Playlist Drawer (Mobile)
-  const btnMenu = document.getElementById('btn-menu');
+  const btnMenu = $('#btn-menu');
   btnMenu?.addEventListener('click', () => document.body.classList.toggle('playlist-open'));
-  // Schließen, wenn Track gewählt
   playlistEl.addEventListener('click', () => { if (window.innerWidth < 880) document.body.classList.remove('playlist-open'); });
 
   // Wischgesten auf Visualizer
@@ -218,41 +245,55 @@
       if (!moved) return;
       const dx = (e.changedTouches[0].clientX - sx);
       const dy = (e.changedTouches[0].clientY - sy);
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
-        if (dx < 0) next(); else prev();
-      }
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) { if (dx < 0) next(); else prev(); }
+      if (Math.abs(dy) > Math.abs(dx) && dy < -50 && window.innerWidth < 880) document.body.classList.add('playlist-open');
     }, {passive:true});
   })();
 
-  // Audio Events
-  audio.addEventListener('timeupdate', updateTimeUI);
-  audio.addEventListener('loadedmetadata', updateTimeUI);
-  audio.addEventListener('ended', next);
-  audio.addEventListener('play',  () => { btnPlay.textContent = '⏸'; });
-  audio.addEventListener('pause', () => { btnPlay.textContent = '▶'; });
+  // Audio Events (beide, aber UI nur für aktiven)
+  function bindAudioEvents(aud) {
+    aud.addEventListener('timeupdate', e => { if (e.target === getActive()) updateTimeUI(); });
+    aud.addEventListener('loadedmetadata', e => { if (e.target === getActive()) updateTimeUI(); });
+    aud.addEventListener('ended', () => next());
+    aud.addEventListener('play',  e => { if (e.target === getActive()) btnPlay.textContent = '⏸'; });
+    aud.addEventListener('pause', e => { if (e.target === getActive()) btnPlay.textContent = '▶'; });
+  }
+  bindAudioEvents(audioA); bindAudioEvents(audioB);
 
-  // Expose für Visualizer
-  window.__asciiAlbum = { audio, state, save, playIndex, next, prev, setQualityCell };
+  // Expose für Visualizer + Boot
+  window.__asciiAlbum = Object.assign(window.__asciiAlbum || {}, {
+    playIndex, next, prev, setQualityCell, getActive, getInactive, state
+  });
 
   // Init
-  loadTracks().then(() => {
-    applyTheme();
-    setQualityCell();
-    const want = Number.isInteger(state.idx) ? state.idx : 0;
-    playIndex(want);
-    // Lautstärke aus Persistenz
-    if (typeof state.vol === 'string' || typeof state.vol === 'number') {
-      vol.value = state.vol; vol.dispatchEvent(new Event('input'));
-    } else {
-      vol.dispatchEvent(new Event('input'));
+  loadTracks().then(async () => {
+    applyTheme(); setQualityCell();
+
+    // Playlist-Peek auf Mobile
+    if (window.innerWidth < 880 && !localStorage.getItem('ascii_album_peek')) {
+      document.body.classList.add('playlist-peek');
+      setTimeout(() => document.body.classList.remove('playlist-peek'), 1200);
+      localStorage.setItem('ascii_album_peek', '1');
     }
+
+    // Start Track in aktives Element laden
+    const t = state.tracks[(Number.isInteger(state.idx) ? state.idx : 0)] || state.tracks[0];
+    if (t) {
+      getActive().src = t.srcMp3 + '?v=0.4';
+      setNowPlaying(t); highlightActive();
+    }
+    // Volume über Graph
+    if (window.__asciiAlbum?.audioGraph?.setVolume) {
+      const v = (typeof state.vol === 'string' || typeof state.vol === 'number') ? state.vol : vol.value;
+      window.__asciiAlbum.audioGraph.setVolume(Math.pow(parseFloat(v), 1.5));
+    }
+    updateTimeUI();
   });
 
   // Preload Dauer
   function preloadDuration(src, i) {
     const a = new Audio();
-    a.src = src;
-    a.preload = 'metadata';
+    a.src = src; a.preload = 'metadata';
     a.addEventListener('loadedmetadata', () => {
       const el = document.querySelector(`.dur[data-idx="${i}"]`);
       if (el) el.textContent = formatTime(a.duration || 0);
