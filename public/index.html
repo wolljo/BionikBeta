@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>ASCII Album – 30 Songs</title>
   <meta name="theme-color" content="#0b0d10">
-  <link rel="manifest" href="manifest.webmanifest?v=0.3">
-  <link rel="stylesheet" href="style.v0.3.css">
+  <link rel="manifest" href="manifest.webmanifest?v=0.4">
+  <link rel="stylesheet" href="style.v0.4.css">
 </head>
 <body>
   <div id="app">
@@ -35,9 +35,9 @@
           <button id="btn-next" title="Nächster (→)" class="big">⟩⟩</button>
         </div>
 
-        <div class="row">
-          <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Position" />
+        <div class="row seekrow">
           <span id="time" class="time">00:00 / 00:00</span>
+          <input id="seek" type="range" min="0" max="1000" value="0" step="1" aria-label="Position" />
         </div>
 
         <div class="row">
@@ -45,22 +45,24 @@
             Vol
             <input id="vol" type="range" min="0" max="1" step="0.01" value="0.9" aria-label="Lautstärke" />
           </label>
-          <button id="btn-shuffle" title="Shuffle (S)">Shuffle</button>
-          <button id="btn-loop" title="Loop (L)">Loop: aus</button>
+          <button id="btn-shuffle" title="Shuffle (S)" aria-pressed="false">🔀</button>
+          <button id="btn-loop" title="Loop (L)" aria-pressed="false">🔁</button>
+          <button id="btn-viz-toggle" title="ASCII an/aus (V)" class="only-mobile">ASCII</button>
         </div>
       </div>
 
-      <aside class="playlist" id="playlist" aria-label="Playlist">
-        <!-- Dynamisch aus tracks.json -->
-      </aside>
+      <aside class="playlist" id="playlist" aria-label="Playlist"></aside>
     </main>
   </div>
 
-  <div class="version-badge">v0.3</div>
+  <div class="version-badge">v0.4</div>
 
-  <audio id="audio" crossorigin="anonymous" preload="metadata"></audio>
-  <script src="player.v0.3.js"></script>
-  <script src="visuals.v0.3.js"></script>
-  <script src="main.v0.3.js"></script>
+  <!-- Dual-Audio für Crossfade -->
+  <audio id="audioA" crossorigin="anonymous" preload="metadata"></audio>
+  <audio id="audioB" crossorigin="anonymous" preload="metadata"></audio>
+
+  <script src="player.v0.4.js"></script>
+  <script src="visuals.v0.4.js"></script>
+  <script src="main.v0.4.js"></script>
 </body>
 </html>
